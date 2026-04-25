@@ -25,7 +25,7 @@ static int64_t ticks;
 static unsigned loops_per_tick;
 
 /*NEW CODE ADDED HERE */
-static struct list sleep_list
+static struct list sleep_list;
 
 
 static intr_handler_func timer_interrupt;
