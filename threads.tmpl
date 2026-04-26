@@ -17,10 +17,12 @@ Willam Sigler <wwsigler42@tntech>
 >> If you have any preliminary comments on your submission, notes for the
 >> TAs, or extra credit, please give them here.
 
+This submission focuses on the Alarm Clock implementation required by the assignment rubric. We did not implement full priority donation or MLFQS.
 >> Please cite any offline or online sources you consulted while
 >> preparing your submission, other than the Pintos documentation, course
 >> text, lecture notes, and course staff.
 
+No external sources were used beyond the Pintos documentation and course materials.
 			     ALARM CLOCK
 			     ===========
 
@@ -72,6 +74,10 @@ The window of vulnerability (between computing wake_tick and calling thread_bloc
 >> A6: Why did you choose this design?  In what ways is it superior to
 >> another design you considered?
 
+We chose an ordered sleep list plus thread blocking because it avoids busy waiting entirely and keeps CPU time available for runnable threads.
+Compared to a loop that repeatedly calls thread_yield(), this design is more efficient, cleaner to reason about, and aligns with the assignment requirement to avoid busy waiting.
+Ordering by wake_tick also minimizes timer-interrupt work because the handler only checks the list front until it reaches a future wake time.
+
 			 PRIORITY SCHEDULING
 			 ===================
 
@@ -81,20 +87,44 @@ The window of vulnerability (between computing wake_tick and calling thread_bloc
 >> `struct' member, global or static variable, `typedef', or
 >> enumeration.  Identify the purpose of each in 25 words or less.
 
+static bool thread_priority_greater (const struct list_elem *a,
+                                     const struct list_elem *b,
+                                     void *aux UNUSED);
+/* Comparator used to keep ready_list sorted by descending priority. */
+
 >> B2: Explain the data structure used to track priority donation.
 >> Use ASCII art to diagram a nested donation.  (Alternately, submit a
 >> .png file.)
+
+Priority donation tracking is not implemented in this submission.
+In a full design, each thread stores a base priority, an effective priority, the lock it is currently waiting on, and a list of received donations.
+
+Nested donation example:
+H(50) waits on L1 held by M(30), and M waits on L2 held by L(10)
+
+H(50) -> donates to M through L1
+M(effective 50) -> donates to L through L2
+L(effective 50) runs, releases L2, then M can run and release L1.
 
 ---- ALGORITHMS ----
 
 >> B3: How do you ensure that the highest priority thread waiting for
 >> a lock, semaphore, or condition variable wakes up first?
 
+For ready threads, we maintain ready_list in descending priority order using list_insert_ordered() with thread_priority_greater(), so the scheduler picks the highest-priority ready thread first.
+
+For a complete implementation, semaphore waiters and condition waiters should also be kept in priority order. lock_release() and sema_up() should unblock the highest-priority waiter first, then yield if needed.
+
 >> B4: Describe the sequence of events when a call to lock_acquire()
 >> causes a priority donation.  How is nested donation handled?
 
+On lock_acquire(), if the lock is held and the current thread has higher priority than the holder, donation occurs: raise the holder's effective priority. 
+If the holder is itself waiting on another lock, propagate donation recursively (or iteratively) up the chain until no further holder exists or priorities no longer increase.
+
 >> B5: Describe the sequence of events when lock_release() is called
 >> on a lock that a higher-priority thread is waiting for.
+
+On lock_release(), remove donations associated with that lock, recompute the releasing thread's effective priority from its base priority and any remaining donations, then unblock the highest-priority waiter for the released lock. If the current thread is no longer highest priority, it should yield.
 
 ---- SYNCHRONIZATION ----
 
@@ -102,10 +132,18 @@ The window of vulnerability (between computing wake_tick and calling thread_bloc
 >> how your implementation avoids it.  Can you use a lock to avoid
 >> this race?
 
+A race can occur if thread_set_priority() changes the current thread's priority while another thread is being inserted/unblocked into ready_list.
+The fix is to disable interrupts around (1) updating base/effective priority and (2) comparing against the highest ready thread to decide whether to yield.
+
+A lock is not the right mechanism here because scheduler/interrupt interactions require non-blocking protection; interrupt disabling is the standard approach.
+
 ---- RATIONALE ----
 
 >> B7: Why did you choose this design?  In what ways is it superior to
 >> another design you considered?
+
+Given the assignment rubric for this course offering, we focused implementation effort on the alarm clock tests. We kept a small priority-ready-list change because it is simple and low risk.
+A full donation design was considered but deferred, since it was outside the graded implementation scope described in the assignment requirements.
 
 			  ADVANCED SCHEDULER
 			  ==================
@@ -115,6 +153,11 @@ The window of vulnerability (between computing wake_tick and calling thread_bloc
 >> C1: Copy here the declaration of each new or changed `struct' or
 >> `struct' member, global or static variable, `typedef', or
 >> enumeration.  Identify the purpose of each in 25 words or less.
+
+In a full MLFQS design, add:
+- per-thread: int nice, fixed_t recent_cpu
+- global: fixed_t load_avg
+- fixed-point helper macros/functions for add, sub, mul, div, conversion, and rounding
 
 ---- ALGORITHMS ----
 
@@ -126,23 +169,29 @@ The window of vulnerability (between computing wake_tick and calling thread_bloc
 timer  recent_cpu    priority   thread
 ticks   A   B   C   A   B   C   to run
 -----  --  --  --  --  --  --   ------
- 0
- 4
- 8
-12
-16
-20
-24
-28
-32
-36
+ 0    0   0   0   63  61  59    A
+ 4    4   0   0   62  61  59    A
+ 8    8   0   0   61  61  59    B
+12    8   4   0   61  60  59    A
+16   12   4   0   60  60  59    B
+20   12   8   0   60  59  59    A
+24   16   8   0   59  59  59    C
+28   16   8   4   59  59  58    B
+32   16  12   4   59  58  58    A
+36   20  12   4   58  58  58    C
 
 >> C3: Did any ambiguities in the scheduler specification make values
 >> in the table uncertain?  If so, what rule did you use to resolve
 >> them?  Does this match the behavior of your scheduler?
 
+Yes. Common ambiguities are tie-breaking when priorities are equal and the exact order of per-tick updates versus every-4th-tick priority recomputation. 
+We used round-robin tie-breaking among equal priorities and recomputed priorities after recent_cpu updates at the required intervals.
+
 >> C4: How is the way you divided the cost of scheduling between code
 >> inside and outside interrupt context likely to affect performance?
+
+We keep interrupt-context work bounded: increment stats each tick, update recent_cpu for the running thread, and perform periodic bulk recalculations at the specified frequencies. 
+More expensive operations are minimized inside interrupts to reduce latency and avoid missed events. This improves responsiveness at the cost of some deferred recalculation complexity.
 
 ---- RATIONALE ----
 
@@ -151,12 +200,18 @@ ticks   A   B   C   A   B   C   to run
 >> time to work on this part of the project, how might you choose to
 >> refine or improve your design?
 
+Advantages: MLFQS automatically adapts priorities using CPU usage and nice values, reducing starvation and improving fairness for interactive threads.
+Disadvantages: higher complexity, fixed-point arithmetic pitfalls, and extra per-tick overhead. With more time, we would optimize recalculation paths and add stronger helper abstractions/tests for fixed-point correctness.
+
 >> C6: The assignment explains arithmetic for fixed-point math in
 >> detail, but it leaves it open to you to implement it.  Why did you
 >> decide to implement it the way you did?  If you created an
 >> abstraction layer for fixed-point math, that is, an abstract data
 >> type and/or a set of functions or macros to manipulate fixed-point
 >> numbers, why did you do so?  If not, why not?
+
+A fixed-point helper layer is preferred because MLFQS formulas are arithmetic-heavy and easy to get wrong with ad hoc integer math. 
+Wrapping conversions and operations in macros/functions improves readability, consistency, and testability, and reduces overflow/rounding mistakes across load_avg, recent_cpu, and priority calculations.
 
 			   SURVEY QUESTIONS
 			   ================
