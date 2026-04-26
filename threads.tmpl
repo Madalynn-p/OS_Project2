@@ -154,10 +154,12 @@ A full donation design was considered but deferred, since it was outside the gra
 >> `struct' member, global or static variable, `typedef', or
 >> enumeration.  Identify the purpose of each in 25 words or less.
 
-In a full MLFQS design, add:
-- per-thread: int nice, fixed_t recent_cpu
-- global: fixed_t load_avg
-- fixed-point helper macros/functions for add, sub, mul, div, conversion, and rounding
+In a full MLFQS design, add declarations such as:
+int nice;                 /* Thread niceness value. */
+fixed_t recent_cpu;       /* Thread recent CPU usage. */
+static fixed_t load_avg;  /* System-wide load average. */
+
+Also add fixed-point helper macros/functions for add, sub, mul, div, conversion, and rounding.
 
 ---- ALGORITHMS ----
 
@@ -186,6 +188,7 @@ ticks   A   B   C   A   B   C   to run
 
 Yes. Common ambiguities are tie-breaking when priorities are equal and the exact order of per-tick updates versus every-4th-tick priority recomputation. 
 We used round-robin tie-breaking among equal priorities and recomputed priorities after recent_cpu updates at the required intervals.
+This does not match our current running scheduler behavior, because MLFQS was not implemented in the submitted code.
 
 >> C4: How is the way you divided the cost of scheduling between code
 >> inside and outside interrupt context likely to affect performance?
@@ -210,8 +213,10 @@ Disadvantages: higher complexity, fixed-point arithmetic pitfalls, and extra per
 >> type and/or a set of functions or macros to manipulate fixed-point
 >> numbers, why did you do so?  If not, why not?
 
-A fixed-point helper layer is preferred because MLFQS formulas are arithmetic-heavy and easy to get wrong with ad hoc integer math. 
-Wrapping conversions and operations in macros/functions improves readability, consistency, and testability, and reduces overflow/rounding mistakes across load_avg, recent_cpu, and priority calculations.
+In our submitted code, fixed-point arithmetic was not implemented because the advanced scheduler (MLFQS) was not implemented.
+If we had implemented MLFQS, we would choose a fixed-point helper abstraction layer (macros/functions) rather than inline arithmetic throughout the scheduler.
+We would choose that approach because it keeps formulas readable, centralizes rounding/conversion policy, improves consistency and testability, and reduces overflow/rounding mistakes in load_avg, recent_cpu, and priority updates.
+If we did not use an abstraction layer, the reason would only be minimalism; however, that approach is more error-prone and harder to maintain.
 
 			   SURVEY QUESTIONS
 			   ================
